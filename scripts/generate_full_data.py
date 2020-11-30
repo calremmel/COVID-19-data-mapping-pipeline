@@ -18,9 +18,9 @@ import sys
 
 from io import StringIO
 
-JHU_URL= 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
+US_JHU_URL= 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
 
-LATEST_DATA_URL = 'https://raw.githubusercontent.com/beoutbreakprepared/nCoV2019/master/latest_data/latestdata.csv'
+GLOBAL_JHU_URL = 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv'
 
 
 parser = argparse.ArgumentParser(description='Generate full-data.json file')
@@ -96,10 +96,75 @@ def prepare_latest_data(infile, quiet=False):
     new.reset_index(drop=False)
     return new
 
-def prepare_jhu_data(outfile, read_from_file, quiet=False):
+def prepare_global_jhu_data(outfile, read_from_file, quiet=False):
     '''
-    Get JHU data from URL and format to
-    to be compatible with full-data.json
+    Get JHU data from URL
+    (used for Global data)
+    '''
+
+    if read_from_file:
+        read_from = read_from_file
+    else:
+        # Get JHU data
+        if not quiet:
+            print("Downloading data from JHU...")
+        req = requests.get(GLOBAL_JHU_URL)
+        if req.status_code != 200:
+            print('Could not get Global JHU data, aborting')
+            sys.exit(1)
+        read_from = StringIO(req.text)
+
+    df = pd.read_csv(read_from)
+
+    if outfile:
+        df.to_csv(outfile, index=False)
+
+    roundto = functions.LAT_LNG_DECIMAL_PLACES
+    df['Lat'] = df.Lat.round(roundto)
+    df['Long_'] = df.Long.round(roundto)
+
+    # do some filtering
+    df = df[~((df.Lat == 0) & (df.Long_ == 0))]
+
+    df["geoid"] = df.apply(lambda row: functions.latlong_to_geo_id(
+        row['Lat'], row['Long_']), axis=1)
+    functions.compile_location_info(df.to_dict("records"),
+        out_file="app/location_info_world.data",
+        keys=["Country/Region", "Province/State"],
+        quiet=quiet)
+
+    rx = '\d{1,2}/\d{1,2}/\d'
+    date_columns = [c for c in df.columns if re.match(rx, c)]
+    keep = ['geoid'] + date_columns
+    df = df[keep]
+
+    # rename to match latestdata format
+    new_dates = []
+    for c in date_columns:
+        month, day, year = c.split('/')
+        month = month.zfill(2)
+        day = day.zfill(2)
+        year = '20' + year if len(year) == 2 else year
+        new = f'{day}.{month}.{year}'
+        new_dates.append(new)
+    df.rename(dict(zip(date_columns, new_dates)), axis=1, inplace=True)
+
+    df = df.set_index('geoid')
+    df = df - df.shift(1, axis=1).fillna(0).astype(int)
+
+    # some entries are inconsistent, i.e. not really cumulative for those
+    # we assign a value of zero (for new cases).  Induces a bit of error, but
+    # preferable than ignoring entirely.
+    df[df < 0] = 0
+
+    df = df.T
+    df.index.name = 'date'
+    df.reset_index(inplace=True)
+    return df
+
+def prepare_us_jhu_data(outfile, read_from_file, quiet=False):
+    '''
+    Get JHU data from URL
     (used for US data)
     '''
 
@@ -109,9 +174,9 @@ def prepare_jhu_data(outfile, read_from_file, quiet=False):
         # Get JHU data
         if not quiet:
             print("Downloading data from JHU...")
-        req = requests.get(JHU_URL)
+        req = requests.get(US_JHU_URL)
         if req.status_code != 200:
-            print('Could not get JHU data, aborting')
+            print('Could not get US JHU data, aborting')
             sys.exit(1)
         read_from = StringIO(req.text)
 
@@ -195,11 +260,11 @@ def chunks(new_cases, total_cases):
     for i in range(len(new_cases)):
         yield (new_cases.iloc[i], total_cases.iloc[i])
 
-def generate_data(out_dir, latest=False, jhu=False, input_jhu='',
+def generate_data(out_dir, latest=False, input_latest='', jhu=False, input_jhu='',
     export_full_data=False, overwrite=False, quiet=False):
 
-  latest = prepare_latest_data(latest, quiet=quiet)
-  jhu = prepare_jhu_data(jhu, input_jhu, quiet=quiet)
+  latest = prepare_global_jhu_data(latest, input_jhu, quiet=quiet)
+  jhu = prepare_us_jhu_data(jhu, input_jhu, quiet=quiet)
   full = latest.merge(jhu, on='date', how='outer')
   full.fillna(0, inplace=True)
   full = full.set_index('date')

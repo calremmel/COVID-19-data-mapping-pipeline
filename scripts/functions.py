@@ -396,7 +396,7 @@ def find_country_iso_code_from_name(name, dict):
   sys.exit(1)
 
 def compile_location_info(in_data, out_file,
-    keys=["country", "province", "city"], country_file="app/countries.data",
+    keys=["country", "province", "city"], country_file="../app/countries.data",
     quiet=False):
 
     if not quiet:
@@ -416,7 +416,7 @@ def compile_location_info(in_data, out_file,
             # 2-letter ISO code for the country
             country_iso = find_country_iso_code_from_name(
                           str(item[keys[0]]), countries)
-            location_info[geo_id] = [(str(item[key]) if str(item[key]) != "nan" else "") for key in [keys[2], keys[1]]] + [country_iso]
+            location_info[geo_id] = [(str(item[key]) if str(item[key]) != "nan" else "") for key in keys[:0:-1]] + [country_iso]
 
     output = []
     for geoid in location_info:
